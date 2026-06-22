@@ -81,6 +81,13 @@ Useful switches include:
 - `-SkipCbz` downloads source material without creating CBZ files.
 - `-OverwriteCbz` recreates CBZ files that already exist.
 
+Keep `-RootFolder` short because Windows limits legacy filesystem paths. The
+resolved root may contain at most 40 characters; `C:\manga\mgeko` is a good
+example. Manga URL slugs longer than 50 characters are shortened only when the
+local `web` and `cbz` folder paths are created. The original slug remains intact
+for URLs, matching, and metadata, and an eight-character hash prevents two long
+names with the same prefix from using the same folder.
+
 The generated structure resembles:
 
 ```text

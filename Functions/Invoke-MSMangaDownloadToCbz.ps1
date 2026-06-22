@@ -32,6 +32,8 @@
 
 .PARAMETER RootFolder
     Root local folder where web and cbz folders will be created.
+    The resolved path must not exceed 40 characters. Use a short root such as
+    C:\manga\mgeko to leave enough room for long chapter filenames.
 
 .PARAMETER ForceDownload
     Re-downloads chapter HTML files and image files even if they already exist.
@@ -107,14 +109,17 @@
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
-    
+    $maximumRootPathLength = 40
+    $maximumMangaFolderNameLength = 50
 
     $requiredFunctions = @(
         'Get-MSUrlLastPart',
         'Save-MSUrlToFile',
         'Get-MSHtmlHref',
         'Get-MSHtmlImageSrc',
-        'Save-MSMangaInfoJson'
+        'Save-MSMangaInfoJson',
+        'ConvertTo-MSSafeFileName',
+        'ConvertTo-MSShortPathSegment'
     )
 
     if (-not $SkipCbz) {
@@ -131,8 +136,24 @@
         }
     }
 
-    if (-not (Test-Path -LiteralPath $RootFolder -PathType Container)) {
-        New-Item -Path $RootFolder -ItemType Directory -Force | Out-Null
+    try {
+        $resolvedRootFolder = [System.IO.Path]::GetFullPath($RootFolder)
+        $resolvedPathRoot = [System.IO.Path]::GetPathRoot($resolvedRootFolder)
+
+        if ($resolvedRootFolder -ne $resolvedPathRoot) {
+            $resolvedRootFolder = $resolvedRootFolder.TrimEnd('\', '/')
+        }
+    }
+    catch {
+        throw "RootFolder is not a valid filesystem path: '$RootFolder'. Use a short root, for example 'C:\manga\mgeko'. $($_.Exception.Message)"
+    }
+
+    if ($resolvedRootFolder.Length -gt $maximumRootPathLength) {
+        throw "RootFolder is too long ($($resolvedRootFolder.Length) characters; maximum $maximumRootPathLength): '$resolvedRootFolder'. Use a shorter root, for example 'C:\manga\mgeko'."
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedRootFolder -PathType Container)) {
+        New-Item -Path $resolvedRootFolder -ItemType Directory -Force | Out-Null
     }
 
     $MangaUrl = $MangaUrl.Trim()
@@ -148,8 +169,15 @@
         $mangaUrlClean -replace ([regex]::Escape("/$mangapath") + '$'), ''
     ).TrimEnd('/')
 
-    $RootMangafolder = Join-Path $RootFolder "web\$mangapath"
-    $RootCBZfolder   = Join-Path $RootFolder "cbz\$mangapath"
+    # Keep $mangapath unchanged because it is also used for URLs, matching, and metadata.
+    # Only the filesystem folder component is made safe and shortened.
+    $safeMangaFolderName = ConvertTo-MSSafeFileName -Name $mangapath
+    $mangaFolderName = ConvertTo-MSShortPathSegment `
+        -Name $safeMangaFolderName `
+        -MaximumLength $maximumMangaFolderNameLength
+
+    $RootMangafolder = Join-Path $resolvedRootFolder "web\$mangaFolderName"
+    $RootCBZfolder   = Join-Path $resolvedRootFolder "cbz\$mangaFolderName"
 
     $MangaInfoUrl  = "$mangaBaseUrl/$mangapath/"
     $MangaInfoFile = Join-Path $RootCBZfolder "manga-info-page.html"
@@ -167,6 +195,7 @@
 
     Write-Verbose "MangaUrl        : $MangaUrl"
     Write-Verbose "MangaPath       : $mangapath"
+    Write-Verbose "MangaFolderName : $mangaFolderName"
     Write-Verbose "MangaBaseUrl    : $mangaBaseUrl"
     Write-Verbose "MangaInfoUrl    : $MangaInfoUrl"
     Write-Verbose "AllChaptersUrl  : $AllchaptersUrl"
@@ -286,6 +315,10 @@
         $chapterName = Get-MSUrlLastPart -Url $mangaChapterUrl
         $mangaChapterFileName = Join-Path $RootMangafolder "$chapterName.html"
 
+        if ($mangaChapterFileName.Length -ge 260) {
+            throw "The generated chapter path is too long ($($mangaChapterFileName.Length) characters; maximum 259): '$mangaChapterFileName'. Stop and use a shorter RootFolder, for example 'C:\manga\mgeko'."
+        }
+
         Write-Verbose "Chapter name: $chapterName"
         Write-Verbose "Chapter file: $mangaChapterFileName"
 
@@ -373,6 +406,10 @@
 
             $ImageSrcFolderFullName = Join-Path $RootMangafolder $ImageSrcFolder
             $ImageSrcFileFullName   = Join-Path $ImageSrcFolderFullName $ImageSrcFileName
+
+            if ($ImageSrcFileFullName.Length -ge 260) {
+                throw "The generated image path is too long ($($ImageSrcFileFullName.Length) characters; maximum 259): '$ImageSrcFileFullName'. Stop and use a shorter RootFolder, for example 'C:\manga\mgeko'."
+            }
 
             Write-host "Image URL : $ImageSrc"
             Write-Verbose "Folder    : $ImageSrcFolder"
@@ -463,6 +500,7 @@
     return [pscustomobject]@{
         MangaUrl              = $MangaUrl
         MangaPath             = $mangapath
+        MangaFolderName       = $mangaFolderName
         MangaBaseUrl          = $mangaBaseUrl
         MangaInfoUrl          = $MangaInfoUrl
         MangaInfoFile         = $MangaInfoFile
